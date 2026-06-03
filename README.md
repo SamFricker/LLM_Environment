@@ -1,145 +1,224 @@
 # LLM Agent in a Virtual World
 
-A raycast world where an LLM-controlled agent can observe, plan, move, pick
-up household objects, modelled as coloured tiles, and complete natural-language tasks.
+A small grid world where an LLM-controlled agent can move, look around, build up
+a partial map, find household objects, pick them up, and drop them in a bin.
 
-This was built for the Humanoid intern challenge. The important part is the
-harness: the model sees a structured observation, chooses from a small action
-space, and the simulator verifies what actually happened.
+This was built for the Humanoid intern challenge. The main point is the harness:
+the LLM is placed inside an environment, receives a structured observation, picks
+primitive actions, and the simulator executes those actions.
+
+The final script is:
+
+- mainSLAM.py
+
+## Final UI
+
+![final UI](media/finalUI.png)
+
 
 ## Demo
 
-[![Thumbnail](media/thumbnail.png)](https://www.youtube.com/watch?v=ukmn9DzXLpY)
+[![Thumbnail](media/thumbnail.png)](https://youtu.be/C1w59VSvIlc)
 
 ## What It Shows
 
-- Random 2D grid world rendered as a first-person raycast view.
-- SLAM-style explored map built from ray observations.
-- Natural-language commands such as "put the towel in the bin".
-- A constrained action space: move, turn, wait, and interact.
-- Batched LLM action planning through an OpenRouter OpenAI-compatible API.
-- Deterministic local planning for common tasks using BFS paths.
-- State-based success checking so the agent cannot just claim it is finished.
-- Frontier exploration when the target object has not been seen yet.
+- A randomly generated grid world with walls, objects, a bin, and a robot.
+- A first-person raycast view of what the robot can currently see.
+- A full true map for debugging.
+- A separate SLAM map that only fills in cells seen through the raycast field of view.
+- The LLM only receives the SLAM map, not the full true map.
+- Unknown SLAM cells are shown as ?.
+- The LLM can explore unknown frontier cells until it finds the target.
+- The side panel shows the prompt sent to the LLM, the raw response, parsed actions, rationale, latency, and simulator status.
+- The full prompt/response/action trace is written to agent_run_log.jsonl.
 
 ## To Run
 
-### Install dependencies:
+Install dependencies:
 
-pip install pygame openai
+- pip install pygame openai
 
-### Get Free OpenRouter key by signing up with link:
-https://openrouter.ai/openai/gpt-oss-120b:free
+Set an API key.
 
-### set it as OPENROUTER_API_KEY in computer environment.
+Preferred direct OpenAI setup:
 
-$env:OPENROUTER_API_KEY="PASTE KEY"
+- $env:OPENAI_API_KEY="PASTE KEY"
 
-### Run main.py:
+OpenRouter also works:
 
-python main.py
+- $env:OPENROUTER_API_KEY="PASTE KEY"
+
+Run the final SLAM demo:
+
+- python mainSLAM.py
+
+Chat client can be tested separately with:
+
+- python chat.py
+
+## Controls
+
+- Type a command and press Enter to send it to the LLM.
+- R resets the world when the command box is empty.
+- Backspace edits the command.
+- Esc quits.
 
 ## Example Commands
 
-- "put the towel in the bin"
-- "put all objects in the bin apart from the towel"
-- "put pink and green in bin"
-- "put lamp in bin first and then orange"
-- "go to the green object and stop"
-- "go to the top right corner"
-- "spin in a circle once"
-- "explore the map"
-
+- "find the mug"
+- "go to the blue object"
+- "pick up the towel"
+- "bring the mug to the bin"
+- "move east two cells"
+- "turn right and move forward"
 
 Color code for household objects:
 
 - orange = mug
 - green/lime = plate
-- blue = towel
+- blue/cyan/azure = towel
 - pink/magenta = bowl
-- purple = spoon
-- yellow = lamp
+- purple/violet = spoon
+- yellow/gold = lamp
 
-## Controls
+## How mainSLAM.py Works
 
-- Type a command and press Enter to start the agent.
-- TAB toggles the command box.
-- P pauses or resumes the current task.
-- C cancels the current task.
-- M toggles the true-map debug view.
-- Arrow keys manually move when no task is active.
-- SPACE manually interacts when no task is active.
-- ESC quits.
+mainSLAM.py keeps two maps:
 
-## How main.py Works
+- the real hidden map, used by the simulator
+- the SLAM map, used by the LLM
 
+The real map is still drawn on screen for debugging, but it is not sent to
+the model. The LLM only sees cells that have been revealed by the robot's
+raycast view.
 
-1. It generates a random reachable grid map with walls, spawn ("bin"), and household
-   objects.
-2. It renders the world through raycasting inspired by the game DOOM, so the agent has 
-   a limited first-person view rather than full map knowledge.
-3. It updates a sparse explored map from the ray scan. Unknown cells stay
-   unknown until seen.
-4. It parses the user's command into useful intent: target objects, excluded
-   objects, delivery tasks, navigation-only tasks, ordered tasks, exploration,
-   and spin commands.
-5. It first tries a local planner. This uses BFS over the explored map for
-   reliable movement, pickup, drop-off, corner navigation, and frontier search.
-6. If the local planner cannot solve the next step, it sends a compact JSON
-   observation to the LLM.
-7. The LLM must return only primitive actions such as move_forward,
-   turn_left, or interact.
-8. The simulator executes queued actions one at a time, applying collision
-   checks and updating the belief map after each action.
-9. After every primitive action, the verifier checks the real simulator state.
-   If the task is complete, stale queued actions are cleared and the agent
-   stops.
+The loop is:
+
+1. Generate a random reachable room.
+2. Cast rays from the robot's current position and heading.
+3. Copy visible cells into the SLAM map.
+4. Send the SLAM map and robot state to the LLM.
+5. Parse the LLM's JSON response into primitive actions.
+6. Run those actions in the simulator.
+7. Update the raycast view and SLAM map again.
+8. If the task is not done, ask the LLM for the next step.
+
+For commands like "find the mug", the task does not stop after one move. The
+agent keeps exploring unknown cells until the mug appears in the SLAM map, or
+until the turn limit is reached.
+
+The important point is that the LLM has to work from partial knowledge. It can
+see the room size and its own position, but not the hidden object locations or
+full wall layout.
 
 ## Observation Format
 
-The model receives structured text and a hidden prompt, not raw pixel data. The observation includes:
+The model receives structured JSON text. It does not receive raw pixels.
 
-- belief position and heading
-- current inventory
-- task progress
-- known object locations
-- a local explored map around the robot
-- a left-to-right ray scan
-- parsed task intent
+The observation includes:
 
-Map representation symbols:
+- user command
+- room size and bounds
+- spawn room cell
+- robot room cell and heading
+- inventory
+- current cell information
+- allowed actions
+- SLAM room map
+- discovered walls
+- discovered traversable cells
+- discovered objects
+- unknown cells
+- frontier cells next to known space
+- SLAM coverage count
+- move affordances for the next step
+- directional clearance through known cells
+- last simulator message
 
-- ? unknown
-- . free space
-- "#" wall
-- @ agent
-- B bin/spawn
-- m, p, t, o, s, l objects
+Map symbols:
 
-These give the system a clear map of surroundings whilst being easy to interpret for an LLM.
+- . known floor
+- "#" known wall
+- ? unknown/unseen cell
+- @ robot
+- B bin
+- m mug
+- p plate
+- t towel
+- o bowl
+- s spoon
+- l lamp
 
 ## Action Space
 
 The agent can only use:
 
-- "turn_left"
-- "turn_right"
-- "move_forward"
-- "move_back"
-- "interact"
-- "wait"
+- move_north
+- move_south
+- move_east
+- move_west
+- move_forward
+- move_back
+- interact
+- wait
+
+Absolute moves also update the robot heading. For example, move_east makes the
+robot face east.
 
 interact picks up an object when standing on it. If the agent is carrying an
-object and is back at spawn, interact drops it in the bin.
+object and is standing at the bin, interact drops it in the bin.
+
+## SLAM Behaviour
+
+- The LLM does not know the full map at the start.
+- It sees ? for unknown cells.
+- It is told not to invent object coordinates it has not discovered.
+- If the target is unknown, it should explore frontier cells.
+- A frontier is an unknown cell next to known space.
+- The model gets new SLAM data after every action.
+- The task loop keeps asking for more actions until the goal is complete or the turn cap is reached.
+- The current cap is 100 LLM turns per task.
+
+This keeps the LLM in control while still making the environment honest: the
+agent has to look around and build knowledge before it can solve the task.
+
+## Logging
+
+The app writes logs to:
+
+agent_run_log.jsonl
+
+Each run records:
+
+- request prompt
+- raw LLM response
+- parsed actions
+- preflight result
+- simulator actions
+- task completion status
+
+This is useful for showing exactly what the model saw, what it decided, and how
+that behaved in the world.
 
 ## Project Files
 
-- main.py - Final demo, simulator, renderer, mapping, planning, API loop, and UI.
-- SLAM_test.py - Manual SLAM and explored-map testing without the LLM loop.
-- raycast_test.py - Earlier raycasting prototype.
-- chat.py - OpenRouter/OpenAI-compatible client setup.
+- mainSLAM.py - Final SLAM version. LLM sees only the discovered map and explores until goals are complete.
+- LLM_integration.py - Simpler working baseline with full-map observation and raycast view.
+- chat.py - OpenAI/OpenRouter client setup and simple chat test.
+- agent_run_log.jsonl - Example trace log written by the app.
+- raycast_test.py - Earlier raycast prototype if present in the repo.
+- SLAM_test.py - Earlier SLAM prototype if present in the repo.
+- media/ - Demo images/video thumbnails.
 - README.md - Project documentation.
-- Media/ - Folder containing videos and images.
+
+## Design Notes
+
+- I used a grid world because the challenge is about the agent harness rather than graphics.
+- The raycast view gives the agent a clear first-person world state as might be available on a real world humanoid robot.
+- The SLAM map makes the observation partial, so the LLM has to explore, as a robot would in a real life scenario.
+- The action space is deliberately small so the model output is easy to validate and transmit.
+- The side panel and JSONL log are there to make the LLM loop inspectable for debugging.
+- mainSLAM.py is the final version to run for the submission.
 
 ## Acknowledgements
 

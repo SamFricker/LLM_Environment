@@ -5,3 +5,4 @@ __pycache__/
 .env.*
 
 media/Demo Video.mp4
+main.py
