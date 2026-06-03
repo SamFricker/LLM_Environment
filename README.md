@@ -3,8 +3,7 @@
 A small grid world where an LLM-controlled agent can move, look around, build up
 a partial map, find household objects, pick them up, and drop them in a bin.
 
-This was built for the Humanoid intern challenge. The main point is the harness:
-the LLM is placed inside an environment, receives a structured observation, picks
+This was built for the Humanoid intern challenge. The LLM is placed inside an environment, receives a structured observation, picks
 primitive actions, and the simulator executes those actions.
 
 The final script is:
